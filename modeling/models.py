@@ -1122,7 +1122,7 @@ class GeneratorBart(BaseModel):
     def __init__(self, args, pretrained_model):
         super().__init__(args, pretrained_model)
 
-        #self.pretrained_model.half()
+        self.pretrained_model.half()
 
         self.beam = args.bart_beam
         self.lenpen = args.bart_lenpen
@@ -1362,7 +1362,7 @@ class WildBart:
         match at least one gold standard, the instance is removed.
         """
         data_loader = getattr(task, "%s_loader" % loader_name)
-        data_loader = data_loader[:2]#OJO
+
         candidates = self.generative_model.generate(data_loader,
                                                     verbose=False,
                                                     score=False)
@@ -1393,9 +1393,7 @@ class WildBart:
 
         print("Original data loader size:", len(data_loader))
         print("Aligned data loader size:", len(new_data_loader))
-        print(data_loader)
-        print("-"*50 + "\n"*3)
-        print(new_data_loader)
+
         return new_data_loader
 
     def predict(self, batch):
