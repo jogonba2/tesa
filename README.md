@@ -12,7 +12,7 @@ Our dataset is available through the Linguistic Data Consortium, at the followin
 
 /toolbox/ubuntu_environment.yml contains the environment I used in my laptop. Also, it is required to install Fairseq and pywikibot as libraries:
 
-```console
+```bash
 git clone https://github.com/jogonba2/tesa.git
 conda env create -f ./toolbox/ubuntu_environment.yml
 pip install --editable ./fairseq/setup.py
