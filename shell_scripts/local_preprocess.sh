@@ -1,8 +1,4 @@
 #!/bin/bash
-#SBATCH --job-name=preprocess
-#SBATCH --time=1:00:00
-#SBATCH --error=/network/tmp1/jose-angel.gonzalez-barba/logs/preprocess-%j.err
-#SBATCH --output=/network/tmp1/jose-angel.gonzalez-barba/logs/preprocess-%j.out
 
 # Parameters
 TASK_TYPE=$1
@@ -19,9 +15,10 @@ BATCH_SIZE=4
 SOFT_LABELS=false
 
 # Paths
-MASTER_THESIS_PATH=/home/mila/j/jose-angel.gonzalez-barba/tesa_collaboration
-FINETUNING_DATA_PATH=/network/tmp1/jose-angel.gonzalez-barba/results/finetuning_data
-PREPROCESSED_DATA_PATH=/network/tmp1/jose-angel.gonzalez-barba/results/preprocessed_data
+MASTER_THESIS_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration
+FINETUNING_DATA_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/results/finetuning_data
+PREPROCESSED_DATA_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/results/preprocessed_data
+SLURM_TMPDIR=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/slurm_dir/
 
 # Recover full paths/names
 FULL_TASK="$TASK"_"$TRAIN_PROPORTION"-"$VALID_PROPORTION"-"$TEST_PROPORTION"_rs"$RANKING_SIZE"_bs"$BATCH_SIZE"_cf-"$CONTEXT_FORMAT"_tf-"$TARGETS_FORMAT"
@@ -41,13 +38,13 @@ then
 FULL_TASK="$FULL_TASK"_"soft"
 fi
 
+
 # Print the parameters
 echo "Parameters:"; echo $TASK_TYPE; echo
 echo "Context format:"; echo $CONTEXT_FORMAT; echo
 echo "Target format:"; echo $TARGETS_FORMAT; echo
 echo "Symbolic info:"; echo $SYMBOLIC_INFO; echo
 echo "Symbolic format:"; echo $SYMBOLIC_FORMAT; echo
-echo "Soft labels:"; echo $SOFT_LABELS; echo
 echo "Results path:"; echo "$PREPROCESSED_DATA_PATH/$TASK_TYPE/$FULL_TASK-bin"; echo
 
 # Load miniconda

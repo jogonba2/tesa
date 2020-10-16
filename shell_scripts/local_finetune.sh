@@ -1,12 +1,4 @@
 #!/bin/bash
-#SBATCH --job-name=finetune
-#SBATCH --gres=gpu:32gb:1
-#SBATCH --mem-per-gpu=32G
-#SBATCH --time=6:00:00
-#SBATCH --error=/network/tmp1/jose-angel.gonzalez-barba/logs/finetune-%j.err
-#SBATCH --output=/network/tmp1/jose-angel.gonzalez-barba/logs/finetune-%j.out
-
-# Usages
 
 # Parameters
 TASK_TYPE=$1
@@ -20,9 +12,10 @@ VALID_PROPORTION=25
 TEST_PROPORTION=25
 RANKING_SIZE=24
 BATCH_SIZE=4
-SOFT_LABELS=false # Soft labels only when using symbolic info as target
-FURTHER_GEN_FINETUNING=false # If true, use as initial checkpoint a discriminative model (for generative)
-FREEZING_STRATEGY=no_freeze
+SOFT_LABELS=false
+FURTHER_GEN_FINETUNING=true # If true, start the finetuning from the weights of discriminative BART.
+FREEZING_STRATEGY=gradual_unfreezing
+
 BART=bart.large.cnn
 
 # Finetuning parameters
@@ -30,7 +23,7 @@ if [ $TASK_TYPE == "classification" ]
 then
   MAX_EPOCHS=6
   MAX_TOKENS=4400
-  MAX_SENTENCES=8
+  MAX_SENTENCES=2
   UPDATE_FREQ=1
   LR=2e-05
   WARMUP_UPDATES_PERCENT=6
@@ -46,10 +39,11 @@ fi
 EXPERIMENT=ep"$MAX_EPOCHS"_tok"$MAX_TOKENS"_sent"$MAX_SENTENCES"_freq"$UPDATE_FREQ"_lr"$LR"_warm"$WARMUP_UPDATES_PERCENT"
 
 # Paths
-MASTER_THESIS_PATH=/home/mila/j/jose-angel.gonzalez-barba/tesa_collaboration
-PREPROCESSED_DATA_PATH=/network/tmp1/jose-angel.gonzalez-barba/results/preprocessed_data
-PRETRAINED_MODELS_PATH=/network/tmp1/jose-angel.gonzalez-barba/pretrained_models
-CHECKPOINTS_PATH=/network/tmp1/jose-angel.gonzalez-barba/results/checkpoints
+MASTER_THESIS_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration
+PREPROCESSED_DATA_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/results/preprocessed_data
+PRETRAINED_MODELS_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/pretrained_models
+CHECKPOINTS_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/results/checkpoints
+SLURM_TMPDIR=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/slurm_dir/
 
 # Recover full paths/names
 FULL_TASK="$TASK"_"$TRAIN_PROPORTION"-"$VALID_PROPORTION"-"$TEST_PROPORTION"_rs"$RANKING_SIZE"_bs"$BATCH_SIZE"_cf-"$CONTEXT_FORMAT"_tf-"$TARGETS_FORMAT"
@@ -83,7 +77,6 @@ echo "Context format:"; echo $CONTEXT_FORMAT; echo
 echo "Target format:"; echo $TARGETS_FORMAT; echo
 echo "Symbolic info:"; echo $SYMBOLIC_INFO; echo
 echo "Symbolic format:"; echo $SYMBOLIC_FORMAT; echo
-echo "Soft labels:"; echo $SOFT_LABELS_MAP; echo
 echo "Further finetuning:"; echo $FURTHER_GEN_FINETUNING; echo
 echo "Initial checkpoint:"; echo $INITIAL_CHECKPOINT; echo
 echo "Freezing strategy:"; echo $FREEZING_STRATEGY; echo
@@ -95,7 +88,7 @@ source activate base
 source activate nlp
 
 # Load pretrained BART
-tar -xf "$PRETRAINED_MODELS_PATH/$BART.tar.gz" -C $SLURM_TMPDIR
+#tar -xf "$PRETRAINED_MODELS_PATH/$BART.tar.gz" -C $SLURM_TMPDIR
 
 # Discriminative model as initial weights for the generative model.
 if [ $FURTHER_GEN_FINETUNING == true ]
@@ -190,7 +183,6 @@ then
       --clip-norm 0.0 \
       --best-checkpoint-metric accuracy \
       --maximize-best-checkpoint-metric \
-      --memory-efficient-fp16 \
       --no-last-checkpoints \
       --skip-invalid-size-inputs-valid-test \
       --find-unused-parameters \
@@ -223,15 +215,6 @@ then
         #NUM_UPDATES_PER_EPOCH=381 # for max_tokens=2048 and --tf v2 without LCA
         NUM_UPDATES_PER_EPOCH=835 # for max_tokens=1024 and --tf v2 without LCA
       fi
-    elif [ $TARGETS_FORMAT == "v_neg" ]
-    then
-      NUM_UPDATES_PER_EPOCH=7225 # for max_tokens=1024 and --tf v_neg
-    elif [ $TARGETS_FORMAT == "v_neg2" ]
-    then
-      NUM_UPDATES_PER_EPOCH=7156 # for max_tokens=1024 and --tf v_neg2
-    elif [ $TARGETS_FORMAT == "v_neg3" ]
-    then
-      NUM_UPDATES_PER_EPOCH=7234 # for max_tokens=1024 and --tf v_neg2
     else
       NUM_UPDATES_PER_EPOCH=829  # for max_tokens=1024, no max_sentences
       #NUM_UPDATES_PER_EPOCH=375  # for max_tokens=2048, no max_sentences
@@ -267,9 +250,6 @@ then
   elif [ $CONTEXT_FORMAT == "v_a_or_b_ce" ]
   then
     NUM_UPDATES_PER_EPOCH=210 # for max_tokens=2048, no max_sentences and tf-v2
-  elif [ $CONTEXT_FORMAT == "v_trg" ]
-  then
-    NUM_UPDATES_PER_EPOCH=866 # for max_tokens=1024, no max_sentences, tf-v2, and the targets in the input.
   elif [ $CONTEXT_FORMAT == "v_blocks1" ]
   then
     NUM_UPDATES_PER_EPOCH=968 # for max_tokens=1024, no max_sentences, tf-v2, LCA k=6, IVI 1-hops k=all
@@ -322,11 +302,12 @@ then
       --adam-betas "(0.9, 0.999)" \
       --adam-eps 1e-08 \
       --clip-norm 0.1 \
-      --fp16 \
       --no-last-checkpoints \
       --freezing-strategy $FREEZING_STRATEGY \
       --find-unused-parameters;
+
 fi
+# OJO CON FREEZE ENCODER PARAMS! #
 
 # Remove checkpoint_best.pt
 #rm $RESULTS_PATH/checkpoint_best.pt

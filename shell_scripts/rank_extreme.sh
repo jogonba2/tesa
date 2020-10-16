@@ -2,7 +2,7 @@
 #SBATCH --job-name=rank
 #SBATCH --gres=gpu:32gb:1
 #SBATCH --mem-per-gpu=32G
-#SBATCH --time=6:00:00
+#SBATCH --time=48:00:00
 #SBATCH --error=/network/tmp1/jose-angel.gonzalez-barba/logs/rank-%j.err
 #SBATCH --output=/network/tmp1/jose-angel.gonzalez-barba/logs/rank-%j.out
 
@@ -14,12 +14,12 @@ EXPERIMENT=$4
 SYMBOLIC_INFO=$5
 SYMBOLIC_FORMAT=$6
 
-TASK=context-dependent-same-type
+TASK=extreme-ranking-tesa
 TRAIN_PROPORTION=50
 VALID_PROPORTION=25
 TEST_PROPORTION=25
-RANKING_SIZE=24
-BATCH_SIZE=4
+RANKING_SIZE=235
+BATCH_SIZE=1
 SOFT_LABELS=false
 BART=bart.large.cnn
 
@@ -58,6 +58,7 @@ echo "Symbolic info:"; echo $SYMBOLIC_INFO; echo
 echo "Symbolic format:"; echo $SYMBOLIC_FORMAT; echo
 echo "Soft labels:"; echo $SOFT_LABELS; echo
 echo "Results path:"; echo $RESULTS_PATH; echo
+echo "Task:"; echo "$TASKS_PATH/$FULL_TASK.pkl"; echo
 
 # Load miniconda
 module load miniconda
@@ -85,7 +86,9 @@ cd $SLURM_TMPDIR
 # Makes sure we don't compute *.pt if there is no checkpoint file
 shopt -s nullglob
 
-for FULL_CHECKPOINT in $RESULTS_PATH/*.pt
+CHECKPOINTS_DIR="/network/tmp1/jose-angel.gonzalez-barba/results/checkpoints/classification/context-dependent-same-type_50-25-25_rs24_bs4_cf-v0_tf-v0/ep6_tok4400_sent8_freq1_lr2e-05_warm6/"
+
+for FULL_CHECKPOINT in $CHECKPOINTS_DIR/*.pt
 do
   # Load the checkpoint
   cp $FULL_CHECKPOINT $BART
@@ -105,6 +108,8 @@ do
     # Run the ranking
     python -u $MASTER_THESIS_PATH/run_model.py \
           --task $TASK \
+          --batch_size $BATCH_SIZE \
+          --ranking_size $RANKING_SIZE \
           --context_format $CONTEXT_FORMAT \
           --targets_format $TARGETS_FORMAT \
           --task_path "" \

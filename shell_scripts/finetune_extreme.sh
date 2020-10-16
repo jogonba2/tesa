@@ -2,7 +2,7 @@
 #SBATCH --job-name=finetune
 #SBATCH --gres=gpu:32gb:1
 #SBATCH --mem-per-gpu=32G
-#SBATCH --time=6:00:00
+#SBATCH --time=24:00:00
 #SBATCH --error=/network/tmp1/jose-angel.gonzalez-barba/logs/finetune-%j.err
 #SBATCH --output=/network/tmp1/jose-angel.gonzalez-barba/logs/finetune-%j.out
 
@@ -14,12 +14,12 @@ CONTEXT_FORMAT=$2
 TARGETS_FORMAT=$3
 SYMBOLIC_INFO=$4
 SYMBOLIC_FORMAT=$5 # Format is not required in case of use the symbolic info as input
-TASK=context-dependent-same-type
+TASK=extreme-ranking-tesa
 TRAIN_PROPORTION=50
 VALID_PROPORTION=25
 TEST_PROPORTION=25
-RANKING_SIZE=24
-BATCH_SIZE=4
+RANKING_SIZE=235
+BATCH_SIZE=1
 SOFT_LABELS=false # Soft labels only when using symbolic info as target
 FURTHER_GEN_FINETUNING=false # If true, use as initial checkpoint a discriminative model (for generative)
 FREEZING_STRATEGY=no_freeze
@@ -122,8 +122,9 @@ then
   if [ $CONTEXT_FORMAT == "v0" ]
   then
     #NUM_UPDATES_PER_EPOCH=2709  #for max_sentences=16 or above, max_tokens=4400
-    NUM_UPDATES_PER_EPOCH=3030  #for max_sentences=8, max_tokens=4400
+    #NUM_UPDATES_PER_EPOCH=3030  #for max_sentences=8, max_tokens=4400
     #NUM_UPDATES_PER_EPOCH=5148  #for max_sentences=4, max_tokens=4400
+    NUM_UPDATES_PER_EPOCH=29838
   elif [ $CONTEXT_FORMAT == "v1" ]
   then
     NUM_UPDATES_PER_EPOCH=9435

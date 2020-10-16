@@ -24,11 +24,13 @@ SOFT_LABELS=false
 BART=bart.large.cnn
 
 # Paths
-MASTER_THESIS_PATH=/home/mila/j/jose-angel.gonzalez-barba/tesa_collaboration
-PRETRAINED_MODELS_PATH=/network/tmp1/jose-angel.gonzalez-barba/pretrained_models
-PREPROCESSED_DATA_PATH=/network/tmp1/jose-angel.gonzalez-barba/results/preprocessed_data
-TASKS_PATH=/network/tmp1/jose-angel.gonzalez-barba/results/modeling_task
-CHECKPOINTS_PATH=/network/tmp1/jose-angel.gonzalez-barba/results/checkpoints
+MASTER_THESIS_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration
+PREPROCESSED_DATA_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/results/preprocessed_data
+PRETRAINED_MODELS_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/pretrained_models
+CHECKPOINTS_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/results/checkpoints
+SLURM_TMPDIR=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/slurm_dir/
+TASKS_PATH=/home/jogonba2/Escritorio/EstanciaMontreal/tesa_collaboration/results/modeling_task
+
 
 # Recover full paths/names
 FULL_TASK="$TASK"_"$TRAIN_PROPORTION"-"$VALID_PROPORTION"-"$TEST_PROPORTION"_rs"$RANKING_SIZE"_bs"$BATCH_SIZE"_cf-"$CONTEXT_FORMAT"_tf-"$TARGETS_FORMAT"
@@ -65,7 +67,7 @@ source activate base
 source activate nlp
 
 # Load pretrained BART
-tar -xf "$PRETRAINED_MODELS_PATH/$BART.tar.gz" -C $SLURM_TMPDIR
+#tar -xf "$PRETRAINED_MODELS_PATH/$BART.tar.gz" -C $SLURM_TMPDIR
 
 # Load the task
 cp "$TASKS_PATH/$FULL_TASK.pkl" $SLURM_TMPDIR

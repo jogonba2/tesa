@@ -10,12 +10,12 @@ CONTEXT_FORMAT=$2
 TARGETS_FORMAT=$3
 SYMBOLIC_INFO=$4
 SYMBOLIC_FORMAT=$5 # Format is not required in case of use the symbolic info as input
-TASK=context-dependent-same-type
+TASK=extreme-ranking-tesa
 TRAIN_PROPORTION=50
 VALID_PROPORTION=25
 TEST_PROPORTION=25
-RANKING_SIZE=24
-BATCH_SIZE=4
+RANKING_SIZE=235
+BATCH_SIZE=1
 SOFT_LABELS=false
 
 # Paths
