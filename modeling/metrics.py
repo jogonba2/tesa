@@ -40,6 +40,29 @@ def precision_at_k(ranks, targets, k):
 def precision_at_10(ranks, targets):
     return precision_at_k(ranks=ranks, targets=targets, k=10)
 
+def precision_at_9(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=9)
+
+def precision_at_8(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=8)
+
+
+def precision_at_7(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=7)
+
+def precision_at_6(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=6)
+def precision_at_5(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=5)
+def precision_at_4(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=4)
+def precision_at_3(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=3)
+def precision_at_2(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=2)
+def precision_at_1(ranks, targets):
+    return precision_at_k(ranks=ranks, targets=targets, k=1)
+
 
 def recall_at_k(ranks, targets, k):
     n = targets.sum()

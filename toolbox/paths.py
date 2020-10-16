@@ -8,6 +8,7 @@ PRETRAINED_MODELS_PATH = "pretrained_models/"
 # region Results folders
 ANNOTATION_TASK_RESULTS_PATH = "results/annotation_task/"
 MODELING_TASK_RESULTS_PATH = "results/modeling_task/"
+KNOWLEDGE_GRAPHS_RESULTS_PATH = "results/knowledge_graphs/"
 BASELINES_RESULTS_PATH = 'results/baselines/'
 TENSORBOARD_LOGS_PATH = "results/baselines/tensorboard_logs/"
 FINETUNING_DATA_PATH = "results/finetuning_data/"

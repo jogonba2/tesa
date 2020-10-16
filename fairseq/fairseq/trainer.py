@@ -332,7 +332,9 @@ class Trainer(object):
             self._dummy_batch = samples[0]
 
         self._set_seed()
+        #print("MODEL TRAIN")
         self.model.train()
+        #print("CRITERION TRAIN")
         self.criterion.train()
         self.zero_grad()
 
@@ -340,7 +342,9 @@ class Trainer(object):
 
         # forward and backward pass
         logging_outputs, sample_size, ooms = [], 0, 0
+        #print(samples)
         for i, sample in enumerate(samples):
+            #print(i)
             sample = self._prepare_sample(sample)
             if sample is None:
                 # when sample is None, run forward/backward on a dummy batch

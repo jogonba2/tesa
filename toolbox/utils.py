@@ -8,6 +8,13 @@ def to_class_name(name):
 
     return "".join([word.capitalize() for word in name.split("-")])
 
+def load_task_absolute_path(path):
+    with open(path, 'rb') as file:
+        task = load(file)
+
+    print("Task loaded from %s.\n" % path)
+
+    return task
 
 def load_task(args):
     """
@@ -30,7 +37,9 @@ def load_task(args):
     root = args.root
     folder_path = args.task_path
     cross_validation = args.cross_validation
-
+    symbolic_algo = args.symbolic_algo
+    symbolic_format = args.symbolic_format
+    soft_labels = args.soft_labels
     train_proportion = ("%.2f" % (1 - valid_proportion - test_proportion)).split(".")[1]
     valid_proportion = ("%.2f" % valid_proportion).split(".")[1]
     test_proportion = ("%.2f" % test_proportion).split(".")[1]
@@ -41,15 +50,12 @@ def load_task(args):
     suffix += "_cf-" + context_format if context_format is not None else ""
     suffix += "_tf-" + targets_format if targets_format is not None else ""
     suffix += "_cv" if cross_validation else ""
-
+    suffix += "_sym-" + symbolic_algo if symbolic_algo else ""
+    suffix += "_symf-" + symbolic_format if symbolic_format and symbolic_format != "input" else ""
+    suffix += "_soft" if soft_labels else ""
     file_name = path_join(root, folder_path, task_name + suffix + '.pkl')
 
-    with open(file_name, 'rb') as file:
-        task = load(file)
-
-    print("Task loaded from %s.\n" % file_name)
-
-    return task
+    return load_task_absolute_path(file_name)
 
 
 def get_pretrained_model(args):

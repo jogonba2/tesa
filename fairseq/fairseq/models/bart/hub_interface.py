@@ -119,8 +119,17 @@ class BARTHubInterface(nn.Module):
 
     def sample(self, sentences: List[str], beam: int = 1, verbose: bool = False, **kwargs) -> list:
         input = [self.encode(sentence) for sentence in sentences]
-        hypos = self.generate(input, beam, verbose, **kwargs)
 
+        # change eos for limiting beam search if specified
+        if "eos" in kwargs:
+            if kwargs["eos"] is None:
+                kwargs.pop("eos")
+            else:
+                # TODO: Find correspondence between this and | in the dictionaries for other eos symbols
+                kwargs["eos"] = 1721
+
+        hypos = self.generate(input, beam, verbose, **kwargs)
+        #return hypos ##### OJO CON ESTO QUITAR #####
         assert len(hypos) == 1
         hypos = hypos[0]
 

@@ -201,6 +201,7 @@ class MultiheadAttention(nn.Module):
                 k = self.k_proj(key)
                 v = self.v_proj(key)
 
+
         else:
             assert key is not None and value is not None
             q = self.q_proj(query)
@@ -242,6 +243,10 @@ class MultiheadAttention(nn.Module):
                 .view(-1, bsz * self.num_heads, self.head_dim)
                 .transpose(0, 1)
             )
+
+        #print(q.shape)
+        #print(k.shape)
+        #print(v.shape)
 
         if saved_state is not None:
             # saved states are stored with shape (bsz, num_heads, seq_len, head_dim)
@@ -314,6 +319,8 @@ class MultiheadAttention(nn.Module):
                 )
 
         attn_weights = torch.bmm(q, k.transpose(1, 2))
+        #print(attn_weights.shape)
+
         attn_weights = MultiheadAttention.apply_sparse_mask(attn_weights, tgt_len, src_len, bsz)
 
         assert list(attn_weights.size()) == [bsz * self.num_heads, tgt_len, src_len]
@@ -363,6 +370,7 @@ class MultiheadAttention(nn.Module):
                 # average attention weights over heads
                 attn_weights = attn_weights.mean(dim=0)
 
+        #print("Output of the multihead shape:", attn.shape)
         return attn, attn_weights
 
     @staticmethod

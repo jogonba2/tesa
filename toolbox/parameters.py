@@ -25,12 +25,23 @@ RANKING_SIZE = 24
 BATCH_SIZE = 4
 CONTEXT_FORMAT = 'v0'
 TARGETS_FORMAT = 'v0'
+SYMBOLIC_FORMAT = "input"
+
 # endregion
 
 # region Models parameters
 SCORES_NAMES = [
     'average_precision',
     'precision_at_10',
+    'precision_at_9',
+    'precision_at_8',
+    'precision_at_7',
+    'precision_at_6',
+    'precision_at_5',
+    'precision_at_4',
+    'precision_at_3',
+    'precision_at_2',
+    'precision_at_1',
     'recall_at_10',
     'ndcg_at_10',
     'reciprocal_best_rank',
@@ -42,9 +53,19 @@ CONTEXT_MAX_SIZE = 750
 SHOW_RANKINGS = 5
 SHOW_CHOICES = 10
 
-BART_BEAM = 10
+RANKER="generator"
+
+BART_BEAM = 24
 BART_LENPEN = 1.0
 BART_MAX_LEN_B = 100
 BART_MIN_LEN = 1
 BART_NO_REPEAT_NGRAM_SIZE = 2
+INFERENCE_BATCH_SIZE = 32
+# endregion
+
+# region Knowledge Graphs parameters
+CATEGORY_MAX_DEPTH = 6
+INFOBOX_MAX_DEPTH = 3
+OUTPUT_CATEGORY_GRAPH = "category_graph.pkl"
+OUTPUT_INFOBOX_GRAPH = "infobox_graph.pkl"
 # endregion

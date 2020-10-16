@@ -69,7 +69,10 @@ def main(args, init_distributed=False):
 
     # Build model and criterion
     model = task.build_model(args)
+    #print("Modelo construido", model)
     criterion = task.build_criterion(args)
+
+    #print("Criterio construido", criterion)
     logger.info(model)
     logger.info('model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
     logger.info('num. model params: {} (num. trained: {})'.format(
@@ -89,8 +92,10 @@ def main(args, init_distributed=False):
 
     # Build trainer
     if args.model_parallel_size == 1:
+        #print("Trainer construido")
         trainer = Trainer(args, task, model, criterion, quantizer)
     else:
+        #print("Megatron construido")
         trainer = MegatronTrainer(args, task, model, criterion)
 
     logger.info('training on {} GPUs'.format(args.distributed_world_size))
@@ -100,8 +105,17 @@ def main(args, init_distributed=False):
     ))
 
     # Load the latest checkpoint if one is available and restore the
-    # corresponding train iterator
+    # corresponding train iterator [it also loads the model parameters]
     extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
+
+    # Init freezing strategy
+    if args.freezing_strategy in ["freeze_encoder", "gradual_unfreezing"]:
+        for layer in model.encoder.layers:
+            freeze(layer)
+
+        if args.freezing_strategy == "gradual_unfreezing":
+            for layer in model.decoder.layers:
+                freeze(layer)
 
     # Train until the learning rate gets too small
     max_epoch = args.max_epoch or math.inf
@@ -109,10 +123,17 @@ def main(args, init_distributed=False):
     lr = trainer.get_lr()
     train_meter = meters.StopwatchMeter()
     train_meter.start()
+    finished_epochs = 0
+
     while (
         lr > args.min_lr
         and epoch_itr.next_epoch_idx <= max_epoch
     ):
+
+        # gradual unfreezing if specified
+        if args.freezing_strategy == "gradual_unfreezing":
+            gradual_unfreezing(model, finished_epochs, max_epoch)
+
         # train for one epoch
         valid_losses = train(args, trainer, task, epoch_itr, max_update)
         if should_stop_early(args, valid_losses[0]) or trainer.get_num_updates() >= max_update:
@@ -126,8 +147,36 @@ def main(args, init_distributed=False):
             # sharded data: get train iterator for next epoch
             load_dataset=(os.pathsep in getattr(args, 'data', '')),
         )
+
+        finished_epochs += 1
+
     train_meter.stop()
     logger.info('done training in {:.1f} seconds'.format(train_meter.sum))
+
+
+def freeze(model):
+    for param in model.parameters():
+        param.requires_grad = False
+
+
+def unfreeze(model):
+    for param in model.parameters():
+        param.requires_grad = True
+
+
+def gradual_unfreezing(model, epoch, max_epoch):
+    n_layers = {"encoder": model.encoder.num_layers,
+                "decoder": model.decoder.num_layers}
+    n_unfreeze = {"encoder": max(max_epoch, n_layers["encoder"]) // min(max_epoch, n_layers["encoder"]),
+                  "decoder": max(max_epoch, n_layers["decoder"]) // min(max_epoch, n_layers["decoder"])}
+
+    # unfreeze encoder layers
+    for i in range(n_unfreeze["encoder"]):
+        unfreeze(model.encoder.layers[n_layers["encoder"] - (epoch * n_unfreeze["encoder"]) - (i + 1)])
+
+    # unfreeze decoder layers
+    for i in range(n_unfreeze["decoder"]):
+        unfreeze(model.decoder.layers[n_layers["decoder"] - (epoch * n_unfreeze["decoder"]) - (i + 1)])
 
 
 def should_stop_early(args, valid_loss):
@@ -183,6 +232,7 @@ def train(args, trainer, task, epoch_itr, max_update=math.inf):
 
     valid_subsets = args.valid_subset.split(',')
     for samples in progress:
+
         with metrics.aggregate('train_inner'):
             log_output = trainer.train_step(samples)
             if log_output is None:  # OOM, overflow, ...

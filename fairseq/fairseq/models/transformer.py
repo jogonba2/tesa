@@ -271,6 +271,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             cls_input=cls_input,
             return_all_hiddens=return_all_hiddens,
         )
+
         decoder_out = self.decoder(
             prev_output_tokens,
             encoder_out=encoder_out,
@@ -744,6 +745,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 - the decoder's output of shape `(batch, tgt_len, vocab)`
                 - a dictionary with any model-specific outputs
         """
+
         x, extra = self.extract_features(
             prev_output_tokens,
             encoder_out=encoder_out,
@@ -783,6 +785,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 - the decoder's features of shape `(batch, tgt_len, embed_dim)`
                 - a dictionary with any model-specific outputs
         """
+
         if alignment_layer is None:
             alignment_layer = self.num_layers - 1
 
@@ -821,6 +824,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         x = x.transpose(0, 1)
 
         self_attn_padding_mask: Optional[Tensor] = None
+
         if self.cross_self_attention or prev_output_tokens.eq(self.padding_idx).any():
             self_attn_padding_mask = prev_output_tokens.eq(self.padding_idx)
 
@@ -876,6 +880,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         if self.project_out_dim is not None:
             x = self.project_out_dim(x)
+
 
         return x, {"attn": [attn], "inner_states": inner_states}
 

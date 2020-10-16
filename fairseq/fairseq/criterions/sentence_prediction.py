@@ -20,6 +20,7 @@ class SentencePredictionCriterion(FairseqCriterion):
         self.classification_head_name = classification_head_name
         self.regression_target = regression_target
 
+
     @staticmethod
     def add_args(parser):
         # fmt: off
@@ -46,12 +47,19 @@ class SentencePredictionCriterion(FairseqCriterion):
             features_only=True,
             classification_head_name=self.classification_head_name,
         )
+
         targets = model.get_targets(sample, [logits]).view(-1)
         sample_size = targets.numel()
 
         if not self.regression_target:
-            lprobs = F.log_softmax(logits, dim=-1, dtype=torch.float32)
-            loss = F.nll_loss(lprobs, targets, reduction='sum')
+            # soft-labels #
+            if self.task.soft_labels:
+                loss = F.binary_cross_entropy_with_logits(logits[:, 1], targets.float(), reduction="sum")
+            ###############
+            else:
+                lprobs = F.log_softmax(logits, dim=-1, dtype=torch.float32)
+                loss = F.nll_loss(lprobs, targets, reduction='sum')
+
         else:
             logits = logits.view(-1).float()
             targets = targets.float()
@@ -65,7 +73,10 @@ class SentencePredictionCriterion(FairseqCriterion):
         }
         if not self.regression_target:
             preds = logits.argmax(dim=1)
-            logging_output['ncorrect'] = (preds == targets).sum()
+            if self.task.soft_labels:
+                logging_output['ncorrect'] = (preds == targets.round()).sum()
+            else:
+                logging_output['ncorrect'] = (preds == targets).sum()
 
         return loss, sample_size, logging_output
 

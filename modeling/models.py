@@ -13,8 +13,10 @@ from nltk.stem import WordNetLemmatizer
 from tqdm import tqdm_notebook as tqdm
 from torch.utils.tensorboard import SummaryWriter
 from fairseq.data.data_utils import collate_tokens
+from itertools import chain
 from os.path import join as path_join
 import matplotlib.pyplot as plt
+import pickle as pkl
 import torch
 
 
@@ -39,6 +41,8 @@ class BaseModel:
         self.train_losses, self.train_scores = [], defaultdict(list)
         self.valid_losses, self.valid_scores = [], defaultdict(list)
         self.test_losses, self.test_scores = [], defaultdict(list)
+
+        self.inference_batch_size = args.inference_batch_size
 
         self.punctuation = str_punctuation
         self.stopwords = set(nltk_stopwords.words('english'))
@@ -67,29 +71,47 @@ class BaseModel:
             args: argparse.ArgumentParser, arguments passed to the script.
         """
 
+        # Show args #
         show = args.show
         show_rankings = args.show_rankings
         show_choices = args.show_choices
         random_examples = args.random_examples
         custom_examples = args.custom_examples
         unseen_examples = args.unseen_examples
+        perform_validation = args.validation
 
-        if not show:
+        # Save results args (for error analysis) #
+        error_analysis = args.error_analysis
+
+        if not show and not error_analysis:
             self.preview(task.train_loader)
 
-            print("Evaluation on the valid loader...")
-            self.valid(task.valid_loader)
+            if perform_validation:
+                print("Evaluation on the valid loader...")
+                self.valid(task.valid_loader)
 
             print("Evaluation on the test loader...")
             self.test(task.test_loader)
 
         else:
-            self.show(task,
-                      show_rankings=show_rankings,
-                      show_choices=show_choices,
-                      random_examples=random_examples,
-                      custom_examples=custom_examples,
-                      unseen_examples=unseen_examples)
+            if show:
+                self.show(task,
+                          show_rankings=show_rankings,
+                          show_choices=show_choices,
+                          random_examples=random_examples,
+                          custom_examples=custom_examples,
+                          unseen_examples=unseen_examples)
+            if error_analysis:
+                self.save_results(task)
+
+    def save_results(self, task):
+        """
+        Saves the results of the task for error analysis
+
+        Args:
+            task: modeling_task.ModelingTask, task for computing and save the results.
+        """
+        pass
 
     def show(self, task, show_rankings, show_choices, random_examples, custom_examples, unseen_examples):
         """
@@ -150,7 +172,7 @@ class BaseModel:
                 ranking_choices, ranking_outputs, ranking_targets = [], [], []
 
                 for inputs, targets in ranking:
-                    outputs = self.pred(inputs)
+                    outputs = self.pred_compat(inputs)
 
                     ranking_choices.extend(inputs['choices'])
                     ranking_outputs.append(outputs)
@@ -215,9 +237,12 @@ class BaseModel:
         Args:
             data_loader: list, list of ranking tasks, which are lists of (inputs, targets) batches.
         """
+        if isinstance(self, ClassifierBart) or \
+                isinstance(self, GeneratorBart):
+            epoch_losses, epoch_scores = self.evaluate_epoch(data_loader=data_loader)
+        else:
 
-        epoch_losses, epoch_scores = self.evaluate_epoch(data_loader=data_loader)
-
+            epoch_losses, epoch_scores = self.evaluate_epoch_compat(data_loader=data_loader)
         self.valid_losses.append(epoch_losses)
         dict_append(self.valid_scores, epoch_scores)
 
@@ -231,16 +256,70 @@ class BaseModel:
             data_loader: list, list of ranking tasks, which are lists of (inputs, targets) batches.
         """
 
-        epoch_losses, epoch_scores = self.evaluate_epoch(data_loader=data_loader)
+        if isinstance(self, ClassifierBart) or \
+                isinstance(self, GeneratorBart):
+            epoch_losses, epoch_scores = self.evaluate_epoch(data_loader=data_loader)
+        else:
+            epoch_losses, epoch_scores = self.evaluate_epoch_compat(data_loader=data_loader)
 
         self.test_losses.append(epoch_losses)
         dict_append(self.test_scores, epoch_scores)
-
         self.print_metrics(epoch_losses=epoch_losses, epoch_scores=epoch_scores)
 
     def evaluate_epoch(self, data_loader):
         """
-        Evaluate the model for one epoch on data_loader.
+        Evaluate the model for one epoch on data_loader (for BART models)
+
+        Args:
+            data_loader: list, list of ranking tasks, which are lists of (inputs, targets) batches.
+
+        Returns:
+            epoch_losses: list, losses (float) of the ranking tasks of an epoch.
+            epoch_scores: dict, list of scores (float) of the ranking tasks of an epoch, mapped with the score's names.
+        """
+
+        epoch_losses, epoch_scores = [], defaultdict(list)
+        ranking_size = len(data_loader[0][0][0]["choices"]) * len(data_loader[0])
+        shuffle(data_loader)
+
+        contexts, choices, = [], []
+        ranking_probas, ranking_targets = [], []
+
+        # Pre-compute data for batching #
+        for ranking in data_loader:
+            context = format_context(ranking,
+                                     context_format=self.context_format,
+                                     context_max_size=self.context_max_size)
+
+            contexts.extend([context for _ in range(ranking_size)])
+
+            for inputs, targets in ranking:
+                choices.extend([format_choice(choice,
+                                              self.targets_format,
+                                              context) for choice in inputs["choices"]])
+                ranking_targets.append(targets)
+
+        ranking_targets = torch.cat(ranking_targets)
+
+        # Batched prediction #
+        for i in range(0, len(contexts), self.inference_batch_size):
+            ranking_probas.extend(self.pred(contexts[i: i + self.inference_batch_size],
+                                            choices[i: i + self.inference_batch_size]))
+
+        ranking_probas = torch.tensor(ranking_probas).reshape((-1, 1))
+
+        # Evaluate rankings #
+        for i in range(0, len(ranking_probas), ranking_size):
+            ranks = get_ranks(ranking_probas[i: i + ranking_size])
+            ranking_scores = self.get_score(ranks, ranking_targets[i: i + ranking_size])
+            self.write_tensorboard(loss=None, score=ranking_scores, tag='test', step=i)
+            epoch_losses.append(None), dict_append(epoch_scores, ranking_scores)
+
+        return epoch_losses, epoch_scores
+
+    def evaluate_epoch_compat(self, data_loader):
+        """
+        Evaluate the model for one epoch on data_loader (for compatibility with the linguistically informed classifiers)
 
         Args:
             data_loader: list, list of ranking tasks, which are lists of (inputs, targets) batches.
@@ -256,16 +335,15 @@ class BaseModel:
         shuffle(data_loader)
 
         for ranking_idx, ranking in tqdm(enumerate(data_loader), total=n_rankings):
-            ranking_loss, ranking_score = self.evaluate_ranking(ranking=ranking)
-
+            ranking_loss, ranking_score = self.evaluate_ranking_compat(ranking=ranking)
             self.write_tensorboard(loss=ranking_loss, score=ranking_score, tag='test', step=ranking_idx)
             epoch_losses.append(ranking_loss), dict_append(epoch_scores, ranking_score)
 
         return epoch_losses, epoch_scores
 
-    def evaluate_ranking(self, ranking):
+    def evaluate_ranking_compat(self, ranking):
         """
-        Evaluate the model for one ranking task.
+        Evaluate the model for one ranking task (for compatibility with the linguistically informed classifiers).
 
         Args:
             ranking: list, batches (inputs, targets) of the ranking task.
@@ -274,26 +352,39 @@ class BaseModel:
             ranking_loss: float, loss of the ranking task.
             ranking_score: dict, list of scores (float) of the ranking task, mapped with the score's names.
         """
+        inputs = {key:val for key, val in ranking[0][0].items()}
+        ranking_targets = ranking[0][1]
 
-        ranking_outputs, ranking_targets = [], []
+        for input, target in ranking[1:]:
+            inputs["choices"].extend(input["choices"])
+            ranking_targets = torch.cat((ranking_targets, target))
 
-        for inputs, targets in ranking:
-            outputs = self.pred(inputs)
-            ranking_outputs.append(outputs), ranking_targets.append(targets)
-
-        ranking_outputs, ranking_targets = torch.cat(ranking_outputs), torch.cat(ranking_targets)
-
+        ranking_outputs = self.pred_compat(inputs)
         ranks = get_ranks(ranking_outputs)
         batch_score = self.get_score(ranks, ranking_targets)
 
         return None, batch_score
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         """
-        Predicts the batch outputs from its inputs.
+        Predicts the batch outputs from its inputs (for compatibility with linguistic informed classifiers)
 
         Args:
             inputs: dict, inputs of a batch.
+
+        Returns:
+            torch.Tensor, outputs of the prediction in a column Tensor.
+        """
+
+        return torch.tensor([0])
+
+    def pred(self, contexts, choices):
+        """
+        Predicts the batch outputs from its inputs (for BART models)
+
+        Args:
+            contexts: list of str, formatted aggregatable instances
+            choices: list of str, choice for each aggregatable instance
 
         Returns:
             torch.Tensor, outputs of the prediction in a column Tensor.
@@ -711,7 +802,7 @@ class BaseModel:
 class Random(BaseModel):
     """ Baseline with random predictions. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         return torch.rand(len(inputs['choices'])).reshape((-1, 1))
 
 
@@ -731,7 +822,7 @@ class Frequency(BaseModel):
                 for choice, target in zip(inputs['choices'], targets):
                     self.counts[choice] += target.data.item()
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         grades = [self.counts[choice] if choice in self.counts else 0 for choice in inputs['choices']]
         return torch.tensor(grades).reshape((-1, 1))
 
@@ -743,7 +834,7 @@ class Frequency(BaseModel):
 class SummariesCount(BaseModel):
     """ Baseline based on the count of words of the summaries that are in the choice. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
         wikis_words = self.get_wikis_words(inputs, flatten=True)
 
@@ -753,7 +844,7 @@ class SummariesCount(BaseModel):
 class SummariesUniqueCount(BaseModel):
     """ Baseline based on the count of unique words of all the summaries that are in choice. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs, setten=True)
         wikis_words = self.get_wikis_words(inputs, flatten=True, setten=True)
 
@@ -763,7 +854,7 @@ class SummariesUniqueCount(BaseModel):
 class SummariesOverlap(BaseModel):
     """ Baseline based on the count of words from choice that are in the overlap of all the summaries. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs, setten=True)
 
         wikis_words = [wiki_words for wiki_words in self.get_wikis_words(inputs, setten=True) if wiki_words]
@@ -775,7 +866,7 @@ class SummariesOverlap(BaseModel):
 class ActivatedSummaries(BaseModel):
     """ Baseline based on the number of summaries that have words matching the answer. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
         wikis_words = self.get_wikis_words(inputs)
 
@@ -789,7 +880,7 @@ class ActivatedSummaries(BaseModel):
 class SummariesAverageEmbedding(BaseModel):
     """ Baseline with predictions based on the average embedding proximity between the choice and all the summaries. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
         wikis_words = self.get_wikis_words(inputs, flatten=True)
 
@@ -800,7 +891,7 @@ class SummariesOverlapAverageEmbedding(BaseModel):
     """ Baseline with predictions based on the average embedding proximity between the choice and the overlap of the
     summaries. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
 
         wikis_words = [wiki_words for wiki_words in self.get_wikis_words(inputs, setten=True) if wiki_words]
@@ -816,7 +907,7 @@ class SummariesOverlapAverageEmbedding(BaseModel):
 class ContextCount(BaseModel):
     """ Baseline based on the count of words of the context that are in the choice. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
         context_words = self.get_context_words(inputs)
 
@@ -826,7 +917,7 @@ class ContextCount(BaseModel):
 class ContextUniqueCount(BaseModel):
     """ Baseline based on the count of unique words of the context that are in choice. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs, setten=True)
         context_words = self.get_context_words(inputs, setten=True)
 
@@ -836,7 +927,7 @@ class ContextUniqueCount(BaseModel):
 class ContextAverageEmbedding(BaseModel):
     """ Baseline with predictions based on the average embedding proximity between the choice and the context. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
         context_words = self.get_context_words(inputs)
 
@@ -850,7 +941,7 @@ class ContextAverageEmbedding(BaseModel):
 class SummariesContextCount(BaseModel):
     """ Baseline based on the count of words of the summaries and the context that are in the choice. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
         other_words = self.get_other_words(inputs)
 
@@ -860,7 +951,7 @@ class SummariesContextCount(BaseModel):
 class SummariesContextUniqueCount(BaseModel):
     """ Baseline based on the count of unique words of all the summaries and the context that are in choice. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs, setten=True)
         other_words = self.get_other_words(inputs, setten=True)
 
@@ -871,7 +962,7 @@ class SummariesContextOverlap(BaseModel):
     """ Baseline based on the count of words from choice that are in the overlap of all the summaries or in the
     context. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs, setten=True)
 
         wikis_words = [wiki_words for wiki_words in self.get_wikis_words(inputs, setten=True) if wiki_words]
@@ -885,7 +976,7 @@ class SummariesContextAverageEmbedding(BaseModel):
     """ Baseline with predictions based on the average embedding proximity between the choice and all the summaries and
     the context. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
         other_words = self.get_other_words(inputs)
 
@@ -896,7 +987,7 @@ class SummariesContextOverlapAverageEmbedding(BaseModel):
     """ Baseline with predictions based on the average embedding proximity between the choice and the overlap of the
     summaries and the context. """
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         choices_words = self.get_choices_words(inputs)
 
         other_words = [wiki_words for wiki_words in self.get_wikis_words(inputs, setten=True) if wiki_words]
@@ -918,13 +1009,100 @@ class ClassifierBart(BaseModel):
     def __init__(self, args, pretrained_model):
         super().__init__(args=args, pretrained_model=pretrained_model)
 
+        self.idx = self.build_label(args.soft_labels, "aggregation")
+        self.results_path = args.results_path
+
+    def build_label(self, soft_labels, target):
         bart = self.pretrained_model
-        labels = [bart.task.label_dictionary.string([torch.tensor([0]) + bart.task.label_dictionary.nspecial]),
-                  bart.task.label_dictionary.string([torch.tensor([1]) + bart.task.label_dictionary.nspecial])]
 
-        self.idx = labels.index("aggregation")
+        if not soft_labels:
+            labels = [bart.task.label_dictionary.string([torch.tensor([0]) + bart.task.label_dictionary.nspecial]),
+                      bart.task.label_dictionary.string([torch.tensor([1]) + bart.task.label_dictionary.nspecial])]
 
-    def pred(self, inputs):
+        else:
+            label_dictionary = bart.task.label_dictionary
+            reverse_labels = {value: key for key, value in label_dictionary.indices.items()}
+            labels = [label_dictionary.string([torch.tensor([i]) + label_dictionary.nspecial])
+                      for i in range(3)
+                      if reverse_labels[i + label_dictionary.nspecial] in ["not_aggregation", "aggregation"]]
+
+        return labels.index(target)
+
+    def save_results(self, task):
+        data_loaders = {"valid": task.valid_loader,
+                        "test": task.test_loader}
+
+        output_dict = {"valid": {"seen": {"person": [], "location": [], "org": []},
+                                 "unseen": {"person": [], "location": [], "org": []}},
+                       "test": {"seen": {"person": [], "location": [], "org": []},
+                                "unseen": {"person": [], "location": [], "org": []}}}
+
+        train_entities = set()
+        for ranking in task.train_loader:
+            inputs, _ = ranking[0]
+            train_entities.update(inputs['entities'])
+
+        for data_loader_key in data_loaders:
+            data_loader = data_loaders[data_loader_key]
+            for ranking in data_loader:
+                inputs, _ = ranking[0]
+
+                # Aggregatable instance
+                entities = inputs["entities"]
+                category = inputs["entities_type"]
+                background = inputs["wiki_articles"]
+                title = inputs["nyt_titles"][0]
+                context = inputs["nyt_contexts"][0]
+                text_instance = format_context(ranking, self.context_format, self.context_max_size)
+
+                # Ranking
+                choices = list(chain.from_iterable([inputs["choices"] for inputs, _ in ranking]))
+                targets = list(map(int, chain.from_iterable([targets for _, targets in ranking])))
+
+                # Seen / Unseen
+                if all([entity not in train_entities for entity in entities]):
+                    seen_key = "unseen"
+                else:
+                    seen_key = "seen"
+
+                # Preds, ranks & scores
+                preds = self.pred([text_instance for _ in choices], choices)
+                ranks = get_ranks(preds)
+                scores = self.get_score(ranks, torch.tensor(targets))
+                ranks = ranks.tolist()
+                preds = preds.reshape(-1).tolist()
+
+                # Generations
+                generations = [None for i in range(task.ranking_size)]
+
+                # Fill dict
+                h = {"entities": entities, "category": category,
+                     "background": background, "title": title,
+                     "context": context, "choices": choices,
+                     "targets": targets, "instance": text_instance,
+                     "preds": preds, "ranks": ranks, "scores": scores,
+                     "generations": generations}
+
+                output_dict[data_loader_key][seen_key][category].append(h)
+
+        with open(self.results_path + "/error_analysis_data.pkl", "wb") as fw:
+            pkl.dump(output_dict, fw)
+
+        print("Data for error analysis created.")
+
+    def pred(self, contexts, choices):
+
+        batch_encoding = [self.pretrained_model.encode(context, choice) \
+                          for context, choice in zip(contexts,  choices)]
+        batch_tokens = collate_tokens(batch_encoding, pad_idx=1)
+
+        with torch.no_grad():
+            logprobs = self.pretrained_model.predict('sentence_classification_head', batch_tokens)
+
+        return logprobs[:, self.idx].exp().reshape((-1, 1))
+
+
+    def pred_compat(self, inputs):
         sentence1 = format_context(inputs,
                                    context_format=self.context_format,
                                    context_max_size=self.context_max_size)
@@ -944,7 +1122,7 @@ class GeneratorBart(BaseModel):
     def __init__(self, args, pretrained_model):
         super().__init__(args, pretrained_model)
 
-        self.pretrained_model.half()
+        #self.pretrained_model.half()
 
         self.beam = args.bart_beam
         self.lenpen = args.bart_lenpen
@@ -961,11 +1139,10 @@ class GeneratorBart(BaseModel):
         for data_loader in data_loaders:
             self.generate(data_loader)
 
-    def generate(self, data_loader):
+    def generate(self, data_loader, verbose=1, score=1):
         """
         Generate the hypothesis of BART on the data_loader and write them in some files. Also evaluate the probabilities
         of the gold standards.
-
         Args:
             data_loader: list, list of ranking tasks, which are lists of (inputs, targets) batches.
         """
@@ -974,52 +1151,149 @@ class GeneratorBart(BaseModel):
         n_rankings = len(data_loader)
         shuffle(data_loader)
 
+        all_hypotheses = []
+        all_scores = []
         for idx, ranking in tqdm(enumerate(data_loader), total=n_rankings):
             entities = ranking[0][0]['entities']
             source = format_context(ranking,
                                     context_format=self.context_format,
                                     context_max_size=self.context_max_size)
             targets = format_targets(ranking,
-                                     targets_format=self.targets_format)
+                                     targets_format=self.targets_format,
+                                     context_format=self.context_format,
+                                     context_max_size=self.context_max_size)
 
             with torch.no_grad():
+                # Remove eos if you want to get probability of the full sequence instead of the prefix.
                 hypotheses = self.pretrained_model.sample([source],
                                                           beam=self.beam,
                                                           lenpen=self.lenpen,
                                                           max_len_b=self.max_len_b,
                                                           min_len=self.min_len,
-                                                          no_repeat_ngram_size=self.no_repeat_ngram_size)
+                                                          no_repeat_ngram_size=self.no_repeat_ngram_size,
+                                                          eos="|" if self.targets_format in ["v2"] else None)
+                all_hypotheses.append(hypotheses)
 
-                scores = self.pretrained_model.sample_scorer([source for _ in range(len(targets))],
-                                                             targets,
-                                                             beam=self.beam,
-                                                             lenpen=self.lenpen,
-                                                             max_len_b=self.max_len_b,
-                                                             min_len=self.min_len,
-                                                             no_repeat_ngram_size=self.no_repeat_ngram_size)
+                if score:
+                    scores = self.pretrained_model.sample_scorer([source for _ in range(len(targets))],
+                                                                 targets,
+                                                                 beam=self.beam,
+                                                                 lenpen=self.lenpen,
+                                                                 max_len_b=self.max_len_b,
+                                                                 min_len=self.min_len,
+                                                                 no_repeat_ngram_size=self.no_repeat_ngram_size)
+                    all_scores.append(scores)
 
-            assert targets == [target for target, _ in scores]
+            if score:
+                assert targets == [target for target, _ in scores]
 
-            with open(path_join(self.results_path, fname + ".source"), 'a') as source_file:
-                source_file.write(str(idx) + ' - ' + source + '\n')
+            if verbose:
+                with open(path_join(self.results_path, fname + ".source"), 'a') as source_file:
+                    source_file.write(str(idx) + ' - ' + source + '\n')
 
-            with open(path_join(self.results_path, fname + ".targets"), 'a') as targets_file:
-                targets_file.write(str(idx) + ' - ' + ', '.join(["%s [%.3f]" % (target, prob)
-                                                                 for target, prob in scores]) + '\n')
+                with open(path_join(self.results_path, fname + ".targets"), 'a') as targets_file:
+                    targets_file.write(str(idx) + ' - ' + ', '.join(["%s [%.3f]" % (target, prob)
+                                                                     for target, prob in scores]) + '\n')
 
-            with open(path_join(self.results_path, fname + ".entities"), 'a') as entities_file:
-                entities_file.write(str(idx) + ' - ' + ', '.join(entities) + '\n')
+                with open(path_join(self.results_path, fname + ".entities"), 'a') as entities_file:
+                    entities_file.write(str(idx) + ' - ' + ', '.join(entities) + '\n')
 
-            with open(path_join(self.results_path, fname + ".hypotheses"), 'a') as hypotheses_file:
-                hypotheses_file.write(str(idx) + ' - ' + ', '.join(["%s [%.3f]" % (hypo, prob)
-                                                                    for hypo, prob in hypotheses]) + '\n')
+                with open(path_join(self.results_path, fname + ".hypotheses"), 'a') as hypotheses_file:
+                    hypotheses_file.write(str(idx) + ' - ' + ', '.join(["%s [%.3f]" % (hypo, prob)
+                                                                        for hypo, prob in hypotheses]) + '\n')
 
-        for extension in [".source", ".targets", ".entities", ".hypotheses"]:
-            with open(path_join(self.results_path, fname + extension), 'a') as file:
-                file.write("##################################################" +
-                           "################################################## \n")
+        if verbose:
+            for extension in [".source", ".targets", ".entities", ".hypotheses"]:
+                with open(path_join(self.results_path, fname + extension), 'a') as file:
+                    file.write("##################################################" +
+                               "################################################## \n")
 
-    def pred(self, inputs):
+        return all_hypotheses
+
+    def save_results(self, task):
+        data_loaders = {"valid": task.valid_loader,
+                        "test": task.test_loader}
+
+        output_dict = {"valid": {"seen": {"person": [], "location": [], "org": []},
+                                 "unseen": {"person": [], "location": [], "org": []}},
+                       "test": {"seen": {"person": [], "location": [], "org": []},
+                                 "unseen": {"person": [], "location": [], "org": []}}}
+
+        train_entities = set()
+        for ranking in task.train_loader:
+            inputs, _ = ranking[0]
+            train_entities.update(inputs['entities'])
+
+        for data_loader_key in data_loaders:
+            data_loader = data_loaders[data_loader_key]
+            for ranking in data_loader:
+                inputs, _ = ranking[0]
+
+                # Aggregatable instance
+                entities = inputs["entities"]
+                category = inputs["entities_type"]
+                background = inputs["wiki_articles"]
+                title = inputs["nyt_titles"][0]
+                context = inputs["nyt_contexts"][0]
+                encoder_input = format_context(ranking, self.context_format, self.context_max_size)
+
+                # Ranking
+                choices = list(chain.from_iterable([inputs["choices"] for inputs, _ in ranking]))
+                formatted_choices = [format_choice(choice, self.targets_format, encoder_input) for choice in choices]
+                targets = list(map(int, chain.from_iterable([targets for _, targets in ranking])))
+
+                # Seen / Unseen
+                if all([entity not in train_entities for entity in entities]):
+                    seen_key = "unseen"
+                else:
+                    seen_key = "seen"
+
+                # Preds, ranks & scores
+                preds = self.pred([encoder_input for _ in formatted_choices], formatted_choices)
+                ranks = get_ranks(preds)
+                scores = self.get_score(ranks, torch.tensor(targets))
+                ranks = ranks.tolist()
+                preds = preds.reshape(-1).tolist()
+
+                # Generations
+                generations = self.pretrained_model.sample([encoder_input],
+                                                            beam=task.ranking_size,
+                                                            lenpen=self.lenpen,
+                                                            max_len_b=self.max_len_b,
+                                                            min_len=self.min_len,
+                                                            no_repeat_ngram_size=self.no_repeat_ngram_size,
+                                                            eos="|" if self.targets_format in ["v2"] else None)
+
+                # Fill dict
+                h = {"entities": entities, "category": category,
+                     "background": background, "title": title,
+                     "context": context, "choices": choices,
+                     "targets": targets, "instance": encoder_input,
+                     "preds": preds, "ranks": ranks, "scores": scores,
+                     "generations": generations}
+
+                output_dict[data_loader_key][seen_key][category].append(h)
+
+        with open(self.results_path + "/error_analysis_data.pkl", "wb") as fw:
+            pkl.dump(output_dict, fw)
+
+        print("Data for error analysis created.")
+
+    def pred(self, contexts, choices):
+
+        with torch.no_grad():
+            scores = self.pretrained_model.sample_scorer(contexts,
+                                                         choices,
+                                                         beam=self.beam,
+                                                         lenpen=self.lenpen,
+                                                         max_len_b=self.max_len_b,
+                                                         min_len=self.min_len,
+                                                         no_repeat_ngram_size=self.no_repeat_ngram_size)
+        assert choices == [choice for choice, _ in scores]
+        return torch.tensor([prob for _, prob in scores]).reshape((-1, 1))
+
+
+    def pred_compat(self, inputs):
         source = format_context(inputs,
                                 context_format=self.context_format,
                                 context_max_size=self.context_max_size)
@@ -1036,6 +1310,99 @@ class GeneratorBart(BaseModel):
         assert inputs['choices'] == [choice for choice, _ in scores]
 
         return torch.tensor([prob for _, prob in scores]).reshape((-1, 1))
+
+
+class WildBart:
+
+    def __init__(self, args, generative_model,
+                 discriminative_model=None):
+
+        self.generative_model = GeneratorBart(args, generative_model)
+        self.ranker = self.generative_model
+        self.rerank = args.rerank
+
+        if args.ranker == "discriminative" and discriminative_model is not None:
+            self.discriminative_model = ClassifierBart(args, discriminative_model)
+            self.generative_model.targets_format="v2"
+            self.ranker = self.discriminative_model
+
+    def wild_play(self, task, args):
+
+        test_loader = self.prepare_data_loader(task, "test", "zero_dist")
+
+        if self.rerank:
+            task.test_loader = test_loader
+            args.validation = False
+            self.ranker.play(task, args)
+
+        else:
+            test_losses, test_scores = [], defaultdict(list)
+            probas = []
+            for ranking_task in test_loader:
+                inp, trg = ranking_task[0][0], ranking_task[0][1]
+                gen_scores = torch.tensor(inp["gen_scores"])
+                ranks = get_ranks(gen_scores.view(-1, 1))
+                ranking_scores = self.ranker.get_score(ranks, trg)
+                curr_probas = gen_scores[trg>0]
+                probas += curr_probas.tolist()
+                dict_append(test_scores, ranking_scores)
+                test_losses.append(None)
+
+            perplexities = get_perplexity(torch.tensor(probas))
+            print("LEN PERPLEXITIES", len(perplexities))
+            print("Average Perplexity:", perplexities.mean())
+            self.ranker.print_metrics(epoch_losses=test_losses, epoch_scores=test_scores)
+
+    def prepare_data_loader(self, task, loader_name,
+                            alignment_type="zero_dist"):
+        """
+        Modifies a data loader of the task by sampling the top
+        ranking_size candidates from generator BART.
+        If, for a given instance, any generated candidates
+        match at least one gold standard, the instance is removed.
+        """
+        data_loader = getattr(task, "%s_loader" % loader_name)
+        data_loader = data_loader[:2]#OJO
+        candidates = self.generative_model.generate(data_loader,
+                                                    verbose=False,
+                                                    score=False)
+
+        gen_scores = [[score for _, score in hypotheses]
+                      for hypotheses in candidates]
+
+        candidates = [[hypo.split("|")[0].strip()
+                       for hypo, _ in hypotheses]
+                      for hypotheses in candidates]
+
+        golds = [get_gold_standards(ranking_task)
+                 for ranking_task in data_loader]
+
+        alignments = [build_alignment(g, c) for g, c in zip(golds, candidates)]
+
+        positive_candidates = filter_alignments(alignments,
+                                                condition=alignment_funcs(alignment_type))
+
+        new_data_loader = []
+        for i, ranking_task in enumerate(data_loader):
+            new_ranking_task = build_aligned_ranking_task(positive_candidates[i],
+                                                          candidates[i],
+                                                          ranking_task,
+                                                          gen_scores[i])
+            if new_ranking_task is not None:
+                new_data_loader.append(new_ranking_task)
+
+        print("Original data loader size:", len(data_loader))
+        print("Aligned data loader size:", len(new_data_loader))
+        print(data_loader)
+        print("-"*50 + "\n"*3)
+        print(new_data_loader)
+        return new_data_loader
+
+    def predict(self, batch):
+        """
+        TODO
+        """
+        pass
 
 # endregion
 
@@ -1224,7 +1591,7 @@ class CustomClassifier(Frequency):
             print("Evaluation on the test loader...")
             self.test(test_loader)
 
-    def pred(self, inputs):
+    def pred_compat(self, inputs):
         if 'features' not in inputs:
             inputs['features'] = self.get_batch_features(inputs)
 

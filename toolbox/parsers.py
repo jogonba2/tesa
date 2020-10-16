@@ -27,6 +27,24 @@ def standard_parser():
 
     return ap
 
+def add_knowledge_graphs_arguments(ap):
+    """
+    Add to the argument parser the parsing arguments relative to the annotations.
+
+    Args:
+        ap: argparse.ArgumentParser, argument parser to update with the knowledge graphs arguments.
+    """
+
+    ap.add_argument("-dc", "--max_depth_category",
+                    type=int, default=CATEGORY_MAX_DEPTH,
+                    help="Maximum depth for the category traversal on entities of TESA")
+    ap.add_argument("-di", "--max_depth_infobox",
+                    type=int, default=INFOBOX_MAX_DEPTH,
+                    help="Maximum depth for the infobox traversal on entities of TESA")
+    ap.add_argument("--annotations_path",
+                    type=str, default=ANNOTATION_TASK_RESULTS_PATH,
+                    help="Path to the annotation task results folder.")
+
 
 def add_annotations_arguments(ap):
     """
@@ -100,6 +118,31 @@ def add_task_arguments(ap):
     ap.add_argument("--finetuning_data_path",
                     type=str, default=FINETUNING_DATA_PATH,
                     help="Path to the finetuning data folder.")
+    ap.add_argument("--graphs_path",
+                    type=str, default=KNOWLEDGE_GRAPHS_RESULTS_PATH,
+                    help="Path to the results folder for knowledge graphs.")
+    ap.add_argument("--category_graph_file",
+                    type=str, default=None,
+                    help="Path for the category graph.")
+    ap.add_argument("--infobox_graph_file",
+                    type=str, default=None,
+                    help="Path for the category graph.")
+    ap.add_argument("--category_symbolic_algo",
+                    type=str, default=None,
+                    help="Method for extracting symbolic information from the category graph")
+    ap.add_argument("--infobox_symbolic_algo",
+                    type=str, default=None,
+                    help="Method for extracting symbolic information from the infobox graph")
+    ap.add_argument("--symbolic_algo",
+                    type=str, default=None,
+                    help="String with the symbolic algorithms joined by '-'"
+                         "(wrapper for simplify run_models with symbolic information)")
+    ap.add_argument("--symbolic_format",
+                    type=str, default=SYMBOLIC_FORMAT,
+                    help="Determines where the symbolic information is used (as inputs or as candidates)")
+    ap.add_argument("--soft_labels",
+                    action='store_true',
+                    help="Distinguish labels of graph information and candidates ('partial_aggregation')")
 
 
 def add_model_arguments(ap):
@@ -111,7 +154,7 @@ def add_model_arguments(ap):
     """
 
     ap.add_argument("-m", "--model",
-                    type=str, required=True,
+                    type=str, required=False,
                     help="Name of the model.")
     ap.add_argument("--scores_names",
                     type=list, default=SCORES_NAMES,
@@ -125,6 +168,15 @@ def add_model_arguments(ap):
     ap.add_argument("--checkpoint_file",
                     type=str, default=None,
                     help="Name of BART's checkpoint file.")
+    ap.add_argument("--checkpoint_generative",
+                    type=str, default=None,
+                    help="Name of generative BART's checkpoint file. (Tesa trained).")
+    ap.add_argument("--checkpoint_discriminative",
+                    type=str, default=None,
+                    help="Name of discriminative BART's checkpoint file (TESA trained).")
+    ap.add_argument("--ranker",
+                    type=str, default=None, choices={"generative", "discriminative"},
+                    help="Model used for ranking candidates in the wild.")
     ap.add_argument("--model_random_seed",
                     type=int, default=RANDOM_SEED,
                     help="Random seed of the model.")
@@ -134,6 +186,9 @@ def add_model_arguments(ap):
     ap.add_argument("--show_choices",
                     type=int, default=SHOW_CHOICES,
                     help="Number of choices to show per ranking.")
+    ap.add_argument("--error_analysis",
+                    action="store_true",
+                    help="Option to save a json file with information for error analysis.")
     ap.add_argument("--bart_beam",
                     type=int, default=BART_BEAM,
                     help="Parameter beam for generator BART.")
@@ -170,3 +225,15 @@ def add_model_arguments(ap):
     ap.add_argument("--unseen_examples",
                     action="store_true",
                     help="Option to show random unseen examples (if show).")
+    ap.add_argument("-bst", "--inference_batch_size",
+                    type=int, default=INFERENCE_BATCH_SIZE,
+                    help="Batch size for inference")
+    ap.add_argument("--wild", default=False,
+                    action="store_true",
+                    help="Option for wild evaluation (candidates extracted from the generative model)")
+    ap.add_argument("--rerank", default=False,
+                    action="store_true",
+                    help="Option for wild evaluation (reranking with the ranker or not)")
+    ap.add_argument("--validation", default=True,
+                    action="store_true",
+                    help="Flag to evaluate on the validation set")

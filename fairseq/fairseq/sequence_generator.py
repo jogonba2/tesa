@@ -75,6 +75,7 @@ class SequenceGenerator(nn.Module):
         self.min_len = min_len
 
         self.normalize_scores = normalize_scores
+
         self.len_penalty = len_penalty
         self.unk_penalty = unk_penalty
         self.retain_dropout = retain_dropout
@@ -172,6 +173,7 @@ class SequenceGenerator(nn.Module):
                 encoder_input[k] = v
 
         src_tokens = encoder_input["src_tokens"]
+
         # length of the source text being the character length except EndOfSentence and pad
         src_lengths = (
             (src_tokens.ne(self.eos) & src_tokens.ne(self.pad)).long().sum(dim=1)

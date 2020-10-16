@@ -39,6 +39,7 @@ from .resampling_dataset import ResamplingDataset
 from .roll_dataset import RollDataset
 from .round_robin_zip_datasets import RoundRobinZipDatasets
 from .sort_dataset import SortDataset
+from .soft_label_dataset import SoftLabelDataset
 from .strip_token_dataset import StripTokenDataset
 from .subsample_dataset import SubsampleDataset
 from .token_block_dataset import TokenBlockDataset
@@ -97,6 +98,7 @@ __all__ = [
     'RoundRobinZipDatasets',
     'ShardedIterator',
     'SortDataset',
+    'SoftLabelDataset',
     'StripTokenDataset',
     'SubsampleDataset',
     'TokenBlockDataset',

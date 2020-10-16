@@ -129,6 +129,7 @@ def load_checkpoint(args, trainer, **passthrough_args):
     else:
         checkpoint_path = args.restore_file
 
+    # This also loads the model parameters! #
     extra_state = trainer.load_checkpoint(
         checkpoint_path,
         args.reset_optimizer,

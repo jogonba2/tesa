@@ -1,20 +1,24 @@
 from modeling.ranking_task import RankingTask
-from modeling.utils import format_context, format_targets
+from modeling.utils import (format_context, format_targets,
+                            format_symbolic_input, format_symbolic_target,
+                            get_tesa_entities, expand_data_loader)
 
+from tqdm import tqdm
 from collections import defaultdict
+from itertools import chain
 from numpy import asarray, split, concatenate
 from numpy.random import seed, shuffle
 from pickle import dump, load
 from re import findall
 from csv import writer
 from os import makedirs
-from os.path import exists
+from os.path import exists, isfile
 
 
 class ModelingTask:
     def __init__(self, ranking_size, batch_size, context_format, targets_format, context_max_size, k_cross_validation,
                  valid_proportion, test_proportion, random_seed, save, silent, results_path,
-                 annotation_task_results_path):
+                 annotation_task_results_path, graph_files, symbolic_algos, symbolic_format, soft_labels):
         """
         Initializes an instance of the base ModelingTask.
 
@@ -32,6 +36,10 @@ class ModelingTask:
             silent: bool, silent option.
             results_path: str, path to the folder to save the modeling task in.
             annotation_task_results_path: str, path to the annotation results folder.
+            graph_files: dict, the values are paths to the files that contains the category and infobox graphs.
+            symbolic_algos: dict, name of the method for computing information from each graph in graph_files.
+            symbolic_targets: str, determines where the symbolic information is used (as inputs or as candidates).
+            soft_labels: bool, distinguish labels of graph information and candidates ('partial_aggregation')
         """
 
         self.ranking_size = ranking_size
@@ -51,6 +59,14 @@ class ModelingTask:
         self.valid_loader = None
         self.test_loader = None
 
+        self.graph_files = graph_files
+        self.symbolic_algos = symbolic_algos
+        self.symbolic_format = symbolic_format
+        self.has_symbolic_info = (graph_files["category"] or graph_files["infobox"]) and \
+                                 (symbolic_algos["category"] or symbolic_algos["infobox"])
+
+        self.soft_labels = soft_labels
+
         seed(random_seed)
 
     # region Main methods
@@ -61,6 +77,85 @@ class ModelingTask:
         self.compute_ranking_tasks()
 
         self.makedirs(self.results_path)
+
+        if not isinstance(self, ExtremeRanking):
+            self.save_pkl()
+
+
+    def process_extreme_rankings(self):
+        from modeling.knowledge_graphs import GraphAlgorithms
+
+        data_loader_names = ["train", "valid", "test"]
+        tesa_entities = get_tesa_entities([getattr(self, name + "_loader") for name in data_loader_names])
+        graph_file = self.graph_files["category"]
+        symbolic_algo = self.symbolic_algos["category"]
+
+        with open(graph_file, "rb") as fr:
+            graph = load(fr)
+
+        cache = {}
+        for data_loader_name in data_loader_names:
+            data_loader = getattr(self, data_loader_name + "_loader")
+            for j in tqdm(range(len(data_loader))):
+                entities = tuple(data_loader[j][0][0]["entities"])
+                if entities in cache:
+                    candidates = cache[entities]
+                else:
+                    n_candidates = self.ranking_size - (len(data_loader[j]) * self.batch_size)
+                    already_candidates = set(chain(*[inp["choices"] for inp, _ in data_loader[j]]))
+                    candidates = getattr(GraphAlgorithms, symbolic_algo)(graph, entities,
+                                                                         n_candidates, tesa_entities,
+                                                                         already_candidates)
+                    cache[entities] = candidates
+                expand_data_loader(data_loader, j, candidates, self.ranking_size)
+                assert len(data_loader[j]) == self.ranking_size
+
+            setattr(self, data_loader_name + "_loader", data_loader)
+
+        self.save_pkl()
+
+    def process_symbolic_info(self):
+        """
+        Process the symbolic info to be used as inputs or targets (including positive and negative targets with
+        and without soft-labels). Also it saves the symbolic info. Some symbolic approaches are slow, so it's convenient
+        to save the information for use it in similar modeling tasks.
+        """
+        from modeling.knowledge_graphs import GraphAlgorithms
+        for graph_file, symbolic_algo in sorted(filter(lambda x: x[0] and x[1],
+                                                zip(self.graph_files.values(),
+                                                    self.symbolic_algos.values()))):
+
+            with open(graph_file, "rb") as fr:
+                graph = load(fr)
+
+            graph_type = "category" if "/category_" in graph_file else "infobox"
+            symbolic_cache = self.load_symbolic_cache(symbolic_algo)
+            data_loader_names = ["train", "valid", "test"] if self.symbolic_format == "input" else ["train"]
+
+            for data_loader_name in data_loader_names:
+                data_loader = getattr(self, data_loader_name + "_loader")
+                for j in tqdm(range(len(data_loader))):
+                    entities = tuple(data_loader[j][0][0]["entities"])
+
+                    if symbolic_cache and entities in symbolic_cache:
+                        symbolic_info = symbolic_cache[entities]
+
+                    else:
+                        symbolic_info = getattr(GraphAlgorithms, symbolic_algo)(graph, entities)
+                        symbolic_cache[entities] = symbolic_info
+
+                    if self.symbolic_format == "input":
+                        format_symbolic_input(data_loader, j, symbolic_info,
+                                              self.context_format, graph_type)
+
+                    else:
+                        format_symbolic_target(data_loader, j, symbolic_info,
+                                               self.symbolic_format, self.soft_labels)
+
+                setattr(self, data_loader_name + "_loader", data_loader)
+
+            self.save_symbolic_cache(symbolic_cache, symbolic_algo)
+
         self.save_pkl()
 
     def process_classification_task(self, folder_path):
@@ -82,7 +177,6 @@ class ModelingTask:
 
         Args:
             folder_path: str, path of the folder to create, starting from <self.results_path>.
-
         """
 
         folder_path = folder_path + "generation/" + self.class_name() + self.suffix() + "/"
@@ -315,7 +409,6 @@ class ModelingTask:
     def get_classification_rows(self, ranking_task):
         """
         Returns a list of rows [sentence1, sentence2, label] for the ranking_task.
-
         Args:
             ranking_task: list of (inputs, targets) batches.
         """
@@ -329,7 +422,12 @@ class ModelingTask:
         for inputs, targets in ranking_task:
             for choice, target in zip(inputs['choices'], targets):
                 sentence2 = choice
-                label = "aggregation" if target else "not_aggregation"
+                if target == 0:
+                    label = "not_aggregation"
+                elif target == 1:
+                    label = "aggregation"
+                elif target == 2:
+                    label = "partial_aggregation"
 
                 rows.append([sentence1, sentence2, label])
 
@@ -349,7 +447,11 @@ class ModelingTask:
                                 context_format=self.context_format,
                                 context_max_size=self.context_max_size)
 
-        targets = format_targets(ranking_task, targets_format=self.targets_format)
+        targets = format_targets(ranking_task,
+                                 targets_format=self.targets_format,
+                                 context_format=self.context_format,
+                                 context_max_size=self.context_max_size)
+
 
         for target in targets:
             source_rows.append(source), target_rows.append(target)
@@ -378,6 +480,10 @@ class ModelingTask:
         suffix += "_cf-" + self.context_format if self.context_format is not None else ""
         suffix += "_tf-" + self.targets_format if self.targets_format is not None else ""
         suffix += "_cv" if self.k_cross_validation else ""
+        suffix += "_sym-" + "-".join(filter(bool, self.symbolic_algos.values())) if self.has_symbolic_info else ""
+        # For compatibility purposes, the symbolic format is only appended to the path if it is for targets.
+        suffix += "_symf-" + self.symbolic_format if self.symbolic_format != "input" else ""
+        suffix += "_soft" if self.soft_labels else ""
 
         return suffix
 
@@ -407,6 +513,22 @@ class ModelingTask:
 
         else:
             self.print("Not saving %s (not in save mode).\n" % file_name)
+
+    def load_symbolic_cache(self, symbolic_algo):
+        """
+        Load the symbolic cache.
+        """
+        if isfile("%s/%s.pkl" % (self.results_path, symbolic_algo)):
+            with open("%s/%s.pkl" % (self.results_path, symbolic_algo), "rb") as fr:
+                return load(fr)
+        return {}
+
+    def save_symbolic_cache(self, symbolic_cache, symbolic_algo):
+        """
+        Saves the symbolic cache
+        """
+        with open("%s/%s.pkl" % (self.results_path, symbolic_algo), "wb") as fw:
+            dump(symbolic_cache, fw)
 
     def save_classification_task(self, path):
         """
@@ -449,6 +571,7 @@ class ModelingTask:
 
         Args:
             path: str, full path to the folder to save in.
+
         """
 
         data_loader_names = ["train", "valid", "test"]
@@ -525,6 +648,29 @@ class ContextFreeSameType(ContextFree):
 class ContextDependent(ModelingTask):
     def get_labelled_answers(self, sample_queries, sample_annotations, queries, annotations):
         answers = self.get_answers_all(annotations=annotations)
+        labelled_answers = {answer: 0 for answer in answers}
+
+        answers = self.get_answers_sample(sample_annotations=sample_annotations)
+        for answer in answers:
+            labelled_answers[answer] = 1
+
+        return labelled_answers
+
+class ExtremeRankingTesa(ModelingTask):
+    def get_labelled_answers(self, sample_queries, sample_annotations, queries, annotations):
+        answers = self.get_answers_same_type(annotations=annotations, sample_queries=sample_queries, queries=queries)
+        labelled_answers = {answer: 0 for answer in answers}
+
+        answers = self.get_answers_sample(sample_annotations=sample_annotations)
+        for answer in answers:
+            labelled_answers[answer] = 1
+
+        return labelled_answers
+
+
+class ExtremeRanking(ModelingTask):
+    def get_labelled_answers(self, sample_queries, sample_annotations, queries, annotations):
+        answers = self.get_answers_same_type(annotations=annotations, sample_queries=sample_queries, queries=queries)
         labelled_answers = {answer: 0 for answer in answers}
 
         answers = self.get_answers_sample(sample_annotations=sample_annotations)

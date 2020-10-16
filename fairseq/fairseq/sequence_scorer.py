@@ -117,6 +117,7 @@ class SequenceScorer(object):
                     alignment = None
             else:
                 avg_attn_i = alignment = None
+
             hypos.append([{
                 'tokens': ref,
                 'score': score_i,

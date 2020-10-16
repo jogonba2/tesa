@@ -89,7 +89,7 @@ class RankingTask:
 
     def filter_answers(self, labelled_answers):
         """ Return labelled_answers limited to self.ranking_size number of possible answers. If self.ranking_size is
-        None, don't do anything; is it is 0, compute only the positive answers (for generation task). """
+        None, don't do anything; if it is 0, compute only the positive answers (for generation task). """
 
         if self.ranking_size is not None:
             negative_answers = sorted([key for key, value in labelled_answers.items() if value == 0])
@@ -100,9 +100,13 @@ class RankingTask:
                 if n > self.ranking_size:
                     raise Exception("Too small ranking size, some answers will be lost (should be at least %i)." % n)
 
-                negative_answers = {answer: 0 for answer in choice(a=negative_answers,
-                                                                   size=self.ranking_size - n,
-                                                                   replace=False)}
+                if self.ranking_size > len(negative_answers):
+                    negative_answers = {answer: 0 for answer in negative_answers}
+
+                else:
+                    negative_answers = {answer: 0 for answer in choice(a=negative_answers,
+                                                                       size=self.ranking_size - n,
+                                                                       replace=False)}
 
                 labelled_answers.update(negative_answers)
 

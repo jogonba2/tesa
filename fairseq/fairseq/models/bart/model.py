@@ -40,10 +40,8 @@ class BARTModel(TransformerModel):
 
     def __init__(self, args, encoder, decoder):
         super().__init__(args, encoder, decoder)
-
         # We follow BERT's random weight initialization
         self.apply(init_bert_params)
-
         self.classification_heads = nn.ModuleDict()
 
     @staticmethod
@@ -57,6 +55,12 @@ class BARTModel(TransformerModel):
             '--pooler-activation-fn',
             choices=utils.get_available_activation_fns(),
             help='activation function to use for pooler layer'
+        )
+        parser.add_argument(
+            '--freezing-strategy',
+            choices=["no_freeze", "freeze_encoder", "gradual_unfreezing"],
+            default="no_freeze",
+            help="Parameter freezing strategies."
         )
 
     @property
@@ -75,6 +79,16 @@ class BARTModel(TransformerModel):
             src_lengths=src_lengths,
             **kwargs,
         )
+
+        """
+        print(src_tokens.shape)
+        print("A"*200)
+        print(dir(encoder_out))
+        print(encoder_out.encoder_out)
+        print(encoder_out.encoder_out.shape)
+        print(encoder_out)
+        exit()
+        """
         x, extra = self.decoder(
             prev_output_tokens,
             encoder_out=encoder_out,
@@ -110,7 +124,9 @@ class BARTModel(TransformerModel):
             load_checkpoint_heads=True,
             **kwargs,
         )
+
         return BARTHubInterface(x['args'], x['task'], x['models'][0])
+
 
     def register_classification_head(self, name, num_classes=None, inner_dim=None, **kwargs):
         """Register a classification head."""

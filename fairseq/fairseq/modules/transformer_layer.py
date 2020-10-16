@@ -336,6 +336,9 @@ class TransformerDecoderLayer(nn.Module):
                 assert incremental_state is not None
                 self.encoder_attn._set_input_buffer(incremental_state, saved_state)
 
+            #print("Enc-Dec Att")
+            #print("Decoder shape", x.shape)
+            #print("Encoder shape", encoder_out.shape)
             x, attn = self.encoder_attn(
                 query=x,
                 key=encoder_out,
@@ -346,6 +349,7 @@ class TransformerDecoderLayer(nn.Module):
                 need_weights=need_attn or (not self.training and self.need_attn),
                 need_head_weights=need_head_weights,
             )
+            #exit()
             x = F.dropout(x, p=self.dropout, training=self.training)
             x = residual + x
             if not self.normalize_before:

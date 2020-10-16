@@ -17,6 +17,7 @@ from fairseq.data import (
     NumSamplesDataset,
     NumelDataset,
     OffsetTokensDataset,
+    SoftLabelDataset,
     PrependTokenDataset,
     RawLabelDataset,
     RightPadDataset,
@@ -43,10 +44,13 @@ class SentencePredictionTask(FairseqTask):
     @staticmethod
     def add_args(parser):
         """Add task-specific arguments to the parser."""
+
         parser.add_argument('data', metavar='FILE',
                             help='file prefix for data')
         parser.add_argument('--num-classes', type=int, default=-1,
                             help='number of classes or regression targets')
+        parser.add_argument('--soft-labels', type=str, default=None,
+                            help='dictionary for soft labels')
         parser.add_argument('--init-token', type=int, default=None,
                             help='add token at the beginning of each batch item')
         parser.add_argument('--separator-token', type=int, default=None,
@@ -62,6 +66,8 @@ class SentencePredictionTask(FairseqTask):
         super().__init__(args)
         self.dictionary = data_dictionary
         self._label_dictionary = label_dictionary
+        self.soft_labels = args.soft_labels
+
         if not hasattr(args, 'max_positions'):
             self._max_positions = (
                 args.max_source_positions,
@@ -168,16 +174,31 @@ class SentencePredictionTask(FairseqTask):
 
         if not self.args.regression_target:
             label_dataset = make_dataset('label', self.label_dictionary)
+            # AQUI ESTA LA CLAVE de las labels (self.label_dictionary - offset (n_special))#
             if label_dataset is not None:
-                dataset.update(
-                    target=OffsetTokensDataset(
-                        StripTokenDataset(
-                            label_dataset,
-                            id_to_strip=self.label_dictionary.eos(),
-                        ),
-                        offset=-self.label_dictionary.nspecial,
+                if self.soft_labels is None:
+                    dataset.update(
+                        target=OffsetTokensDataset(
+                            StripTokenDataset(
+                                label_dataset,
+                                id_to_strip=self.label_dictionary.eos(),
+                            ),
+                            offset=-self.label_dictionary.nspecial,
+                        )
                     )
-                )
+
+                else:
+                    dataset.update(
+                        target= SoftLabelDataset(
+                            StripTokenDataset(
+                                label_dataset,
+                                id_to_strip=self.label_dictionary.eos(),
+                            ),
+                            label_dictionary=self.label_dictionary,
+                            soft_labels=self.soft_labels
+                        )
+                    )
+
         else:
             label_path = "{0}.label".format(get_path('label', split))
             if os.path.exists(label_path):
